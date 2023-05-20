@@ -16,15 +16,16 @@ type HyperLogLog struct {
 	store        []int
 	size         int
 	b            int
+	a_m          float64
 }
 
 const (
 	DEFAULT_ACCURACY = 70
 )
 
-func getIndexingBitsSize(accuracy float64) uint {
-	return uint(
-		math.Ceil(
+func getIndexingBitsSize(accuracy float64) int {
+	return int(
+		math.Round(
 			math.Log2(
 				math.Pow((1.04 / ((100 - accuracy) / 100)), 2),
 			),
@@ -51,8 +52,9 @@ func New(options ...func(*HyperLogLog)) (*HyperLogLog, error) {
 	}
 
 	hll.b = getIndexingBitsSize(hll.Accuracy)
-	hll.size = uint(math.Exp2(float64(hll.b)))
-	hll.store = make([]uint8, hll.size)
+	hll.size = int(math.Exp2(float64(hll.b)))
+	hll.store = make([]int, hll.size)
+	hll.a_m = math.Pow(float64(hll.size)*math.Pow(math.Log(2), float64(-1*hll.size)), 0.5)
 	return hll, nil
 }
 
@@ -68,8 +70,14 @@ func (b *HyperLogLog) getHash(seed int, key []byte) (uint64, error) {
 	t := []byte(strconv.Itoa(seed))
 	var err error
 	_, err = b.HashFunction.Write(t)
+	if err != nil {
+		return 0, err
+	}
 	_, err = b.HashFunction.Write(key)
-	return b.HashFunction.Sum64(), err
+	if err != nil {
+		return 0, err
+	}
+	return b.HashFunction.Sum64(), nil
 }
 
 func WithHash(hash hash.Hash64) func(*HyperLogLog) {
@@ -88,4 +96,12 @@ func (hll *HyperLogLog) Add(element []byte) error {
 	leadingZeroes := bits.LeadingZeros64(r)
 	hll.store[l] = int(math.Max(float64(leadingZeroes), float64(hll.store[l])))
 	return nil
+}
+
+func (hll *HyperLogLog) ElementsEstimate() int {
+	var harmonicMean float64 = 0.0
+	for _, r := range hll.store {
+		harmonicMean += math.Pow(2, float64(-1*r))
+	}
+	return int(math.Round((hll.a_m * float64(hll.size*hll.size)) / harmonicMean))
 }
